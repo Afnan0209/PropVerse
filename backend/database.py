@@ -1,43 +1,45 @@
+import os
 import mysql.connector
 from mysql.connector import pooling
 from fastapi import HTTPException
+from dotenv import load_dotenv
 
-# Standard MySQL configuration
+# Load environment variables from the .env file
+load_dotenv()
+
 DB_CONFIG = {
-    "host": "localhost",
-    "database": "propverse",
+    "host": os.getenv("DB_HOST", "localhost"),
+    "database": os.getenv("DB_NAME", "propverse"),
     "raise_on_warnings": True
 }
 
-# 1. Initialize Connection Pools for your 3 DCL Users
 try:
     admin_pool = pooling.MySQLConnectionPool(
         pool_name="admin_pool",
         pool_size=5,
-        user="prop_admin",
-        password="Admin@123",
+        user=os.getenv("ADMIN_USER"),
+        password=os.getenv("ADMIN_PASS"),
         **DB_CONFIG
     )
-
+    
     manager_pool = pooling.MySQLConnectionPool(
         pool_name="manager_pool",
         pool_size=5,
-        user="property_manager",
-        password="Manager@123",
+        user=os.getenv("MANAGER_USER"),
+        password=os.getenv("MANAGER_PASS"),
         **DB_CONFIG
     )
 
     staff_pool = pooling.MySQLConnectionPool(
         pool_name="staff_pool",
         pool_size=5,
-        user="maintenance_staff",
-        password="Staff@123",
+        user=os.getenv("STAFF_USER"),
+        password=os.getenv("STAFF_PASS"),
         **DB_CONFIG
     )
     print("Database connection pools established successfully.")
 except mysql.connector.Error as err:
     print(f"Error creating connection pools: {err}")
-
 
 # 2. FastAPI Dependencies (Yields a connection for a specific route)
 def get_admin_db():

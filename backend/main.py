@@ -2,19 +2,22 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import mysql.connector
 
-# Import the database dependency we created earlier
-from database import get_admin_db 
+from database import get_admin_db
+from routers import manager, admin, staff
 
 app = FastAPI(title="PropVerse API")
 
-# Configure CORS to allow your React/Vite frontend to connect
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Standard Vite development port
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(manager.router)
+app.include_router(admin.router)
+app.include_router(staff.router)
 
 @app.get("/")
 def health_check():
@@ -36,3 +39,7 @@ def test_db_connection(db: mysql.connector.MySQLConnection = Depends(get_admin_d
         return {"status": "success", "data": roles}
     except mysql.connector.Error as err:
         raise HTTPException(status_code=500, detail=f"Database query failed: {err}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
