@@ -33,6 +33,7 @@ export default function DataView({ view }) {
           </p>
         </div>
         <div className="head-tools">
+          {view.readOnly && <span className="badge badge-quiet">Read only</span>}
           <input
             type="search" className="search" placeholder={`Search ${view.plural}`}
             aria-label={`Search ${view.plural}`} value={query} onChange={(e) => setQuery(e.target.value)}

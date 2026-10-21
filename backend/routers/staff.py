@@ -1,20 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
 import mysql.connector
+from fastapi import APIRouter, Depends, HTTPException
+
+from auth import require_roles
 from database import get_staff_db
 
-# Create a router instance for the Maintenance Staff
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/staff", tags=["Maintenance Dashboard"])
 
+
 @router.get("/tickets")
-def get_maintenance_tickets(db: mysql.connector.MySQLConnection = Depends(get_staff_db)):
-    """Fetches all maintenance requests using the staff connection."""
+def get_maintenance_tickets(
+    _user: dict = Depends(require_roles("staff", "admin", "manager")),
+    db=Depends(get_staff_db),
+):
+    cursor = db.cursor(dictionary=True)
     try:
-        cursor = db.cursor(dictionary=True)
-        # Using the maintenance view created in schema.sql
-        cursor.execute("SELECT * FROM vw_maintenance_report;")
-        tickets = cursor.fetchall()
+        cursor.execute("SELECT * FROM vw_maintenance_report")
+        return {"status": "success", "data": cursor.fetchall()}
+    except mysql.connector.Error:
+        logger.exception("Could not load maintenance tickets")
+        raise HTTPException(status_code=500, detail="Could not load maintenance tickets")
+    finally:
         cursor.close()
-        
-        return {"status": "success", "data": tickets}
-    except mysql.connector.Error as err:
-        raise HTTPException(status_code=500, detail=f"Database error: {err}")

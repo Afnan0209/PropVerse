@@ -1,37 +1,51 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getRows, postJson, errorMessage } from '../api/client.js';
-import { CREATE_LEASE_PATH, UNITS_PATH } from '../config/views.js';
+import { CREATE_LEASE_PATH, MANAGER_TENANTS_PATH, UNITS_PATH } from '../config/views.js';
 import { money } from '../utils.js';
 
 const EMPTY = { unit_id: '', tenant_id: '', start_date: '', end_date: '', monthly_rent: '', security_deposit: '' };
 
 export default function LeaseForm() {
   const [units, setUnits] = useState(null);
+  const [tenants, setTenants] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const loadUnits = () =>
-    getRows(UNITS_PATH).then(setUnits).catch((e) => { setUnits([]); setError(errorMessage(e)); });
-  useEffect(() => { loadUnits(); }, []);
+  async function loadResources() {
+    setError('');
+    try {
+      const [availableUnits, availableTenants] = await Promise.all([
+        getRows(UNITS_PATH),
+        getRows(MANAGER_TENANTS_PATH),
+      ]);
+      setUnits(availableUnits);
+      setTenants(availableTenants);
+    } catch (requestError) {
+      setUnits([]);
+      setTenants([]);
+      setError(errorMessage(requestError));
+    }
+  }
 
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  useEffect(() => { loadResources(); }, []);
 
-  // Picking a unit fills in its listed rent and deposit (still editable)
+  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
   function pickUnit(id) {
-    const u = units?.find((x) => x.unit_id === id);
-    setForm((f) => ({
-      ...f,
+    const unit = units?.find((item) => item.unit_id === id);
+    setForm((current) => ({
+      ...current,
       unit_id: id,
-      monthly_rent: u ? u.base_rent : '',
-      security_deposit: u ? u.deposit : '',
+      monthly_rent: unit ? unit.base_rent : '',
+      security_deposit: unit ? unit.deposit : '',
     }));
   }
 
-  async function submit(e) {
-    e.preventDefault();
+  async function submit(event) {
+    event.preventDefault();
     setError('');
     setSuccess('');
     if (form.end_date <= form.start_date) {
@@ -40,19 +54,19 @@ export default function LeaseForm() {
     }
     setSaving(true);
     try {
-      const res = await postJson(CREATE_LEASE_PATH, {
+      const response = await postJson(CREATE_LEASE_PATH, {
         unit_id: form.unit_id,
-        tenant_id: form.tenant_id.trim(),
+        tenant_id: form.tenant_id,
         start_date: form.start_date,
         end_date: form.end_date,
-        monthly_rent: Number(form.monthly_rent),
-        security_deposit: Number(form.security_deposit),
+        monthly_rent: form.monthly_rent,
+        security_deposit: form.security_deposit,
       });
-      setSuccess(res.data?.message || 'Lease created.');
+      setSuccess(response.data?.message || 'Lease created.');
       setForm(EMPTY);
-      loadUnits(); // the unit is now occupied, so it leaves the list
-    } catch (err) {
-      setError(errorMessage(err));
+      await loadResources();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
     } finally {
       setSaving(false);
     }
@@ -74,42 +88,48 @@ export default function LeaseForm() {
         <div className="form-grid">
           <div className="field wide">
             <label htmlFor="unit">Unit</label>
-            <select id="unit" required value={form.unit_id} onChange={(e) => pickUnit(e.target.value)} disabled={!units}>
+            <select id="unit" required value={form.unit_id} onChange={(event) => pickUnit(event.target.value)} disabled={!units}>
               <option value="">{units ? (units.length ? 'Choose an available unit' : 'No units are available') : 'Loading units...'}</option>
-              {units?.map((u) => (
-                <option key={u.unit_id} value={u.unit_id}>
-                  {u.unit_number}, {u.building_name}, {u.property_name} ({u.unit_type}, {money(u.base_rent)})
+              {units?.map((unit) => (
+                <option key={unit.unit_id} value={unit.unit_id}>
+                  {unit.unit_number}, {unit.building_name}, {unit.property_name} ({unit.unit_type}, {money(unit.base_rent)})
                 </option>
               ))}
             </select>
           </div>
 
           <div className="field wide">
-            <label htmlFor="tenant">Tenant ID</label>
-            <input id="tenant" required placeholder="For example TEN-001" value={form.tenant_id} onChange={(e) => set('tenant_id', e.target.value)} />
-            <p className="hint">The tenant_id from the TENANTS table. The lease fails if this ID does not exist.</p>
+            <label htmlFor="tenant">Tenant</label>
+            <select id="tenant" required value={form.tenant_id} onChange={(event) => set('tenant_id', event.target.value)} disabled={!tenants}>
+              <option value="">{tenants ? (tenants.length ? 'Choose a tenant' : 'No tenants found') : 'Loading tenants...'}</option>
+              {tenants?.map((tenant) => (
+                <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                  {tenant.name} ({tenant.email})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="field">
             <label htmlFor="start">Lease start</label>
-            <input id="start" type="date" required value={form.start_date} onChange={(e) => set('start_date', e.target.value)} />
+            <input id="start" type="date" required value={form.start_date} onChange={(event) => set('start_date', event.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="end">Lease end</label>
-            <input id="end" type="date" required value={form.end_date} onChange={(e) => set('end_date', e.target.value)} />
+            <input id="end" type="date" required value={form.end_date} onChange={(event) => set('end_date', event.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="rent">Monthly rent</label>
-            <input id="rent" type="number" min="0" step="0.01" required value={form.monthly_rent} onChange={(e) => set('monthly_rent', e.target.value)} />
+            <input id="rent" type="number" min="0.01" step="0.01" required value={form.monthly_rent} onChange={(event) => set('monthly_rent', event.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="deposit">Security deposit</label>
-            <input id="deposit" type="number" min="0" step="0.01" required value={form.security_deposit} onChange={(e) => set('security_deposit', e.target.value)} />
+            <input id="deposit" type="number" min="0" step="0.01" required value={form.security_deposit} onChange={(event) => set('security_deposit', event.target.value)} />
           </div>
         </div>
 
         <div className="modal-actions">
-          <button type="submit" className="btn" disabled={saving || !units?.length}>
+          <button type="submit" className="btn" disabled={saving || !units?.length || !tenants?.length}>
             {saving ? 'Creating lease...' : 'Create lease'}
           </button>
         </div>

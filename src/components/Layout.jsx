@@ -1,28 +1,43 @@
-import { NavLink, Outlet, useParams, Navigate, Link } from 'react-router-dom';
+import { NavLink, Outlet, Navigate, Link, useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext.jsx';
 import { ROLES } from '../config/views.js';
 
 export default function Layout() {
   const { role } = useParams();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const cfg = ROLES[role];
-  if (!cfg) return <Navigate to="/" replace />;
+  if (!cfg || !user || !cfg.allowedRoles.includes(user.role)) return <Navigate to="/login" replace />;
+
+  function signOut() {
+    logout();
+    navigate('/login', { replace: true });
+  }
+
+  const views = cfg.views.filter((view) => view.allowedRoles.includes(user.role));
 
   return (
     <div className="shell">
       <aside className="sidebar">
-        <Link to="/" className="brand" aria-label="PropVerse, switch role">
+        <Link to={`/${role}/dashboard`} className="brand" aria-label="PropVerse home">
           <span className="brand-mark" aria-hidden="true" />
           PropVerse
         </Link>
-        <p className="role-chip">{cfg.title} workspace</p>
+        <div className="identity">
+          <p className="user-name">{user.full_name}</p>
+          <p className="role-chip">{cfg.title} workspace</p>
+        </div>
 
         <nav aria-label="Main">
           <NavLink to={`/${role}/dashboard`} className="nav-link">Overview</NavLink>
-          {cfg.views.map((v) => (
-            <NavLink key={v.key} to={`/${role}/${v.key}`} className="nav-link">{v.label}</NavLink>
+          {views.map((view) => (
+            <NavLink key={view.key} to={`/${role}/${view.key}`} className="nav-link">
+              {view.label}
+            </NavLink>
           ))}
         </nav>
 
-        <Link to="/" className="switch">Switch role</Link>
+        <button type="button" className="logout-btn" onClick={signOut}>Logout</button>
       </aside>
 
       <main className="main">

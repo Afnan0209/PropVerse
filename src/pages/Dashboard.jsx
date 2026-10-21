@@ -7,20 +7,23 @@ import Badge from '../components/Badge.jsx';
 
 const tally = (rows, key, order) => {
   const counts = {};
-  rows.forEach((r) => { counts[r[key]] = (counts[r[key]] || 0) + 1; });
+  rows.forEach((row) => {
+    if (row[key] !== null && row[key] !== undefined && row[key] !== '') {
+      counts[row[key]] = (counts[row[key]] || 0) + 1;
+    }
+  });
   const labels = order || Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   return labels.map((label) => ({ label, n: counts[label] || 0 }));
 };
-const sum = (rows, key) => rows.reduce((s, r) => s + Number(r[key] || 0), 0);
+const sum = (rows, key) => rows.reduce((total, row) => total + Number(row[key] || 0), 0);
 
-// What each role sees on its overview, computed from the one list its API provides
 const SUMMARIES = {
   admin: (rows) => ({
     ledger: [
-      { label: 'Properties', value: rows.length, note: `${new Set(rows.map((r) => r.city)).size} cities` },
-      { label: 'Residential', value: rows.filter((r) => r.property_type === 'Residential').length, note: 'properties' },
-      { label: 'Commercial', value: rows.filter((r) => r.property_type === 'Commercial').length, note: 'properties' },
-      { label: 'Total area', value: `${sum(rows, 'total_area').toLocaleString('en-IN')} sq ft`, note: `${new Set(rows.map((r) => r.owner_id)).size} owners` },
+      { label: 'Properties', value: rows.length, note: `${new Set(rows.map((row) => row.city)).size} cities` },
+      { label: 'Residential', value: rows.filter((row) => row.property_type === 'Residential').length, note: 'properties' },
+      { label: 'Commercial', value: rows.filter((row) => row.property_type === 'Commercial').length, note: 'properties' },
+      { label: 'Total area', value: `${sum(rows, 'total_area').toLocaleString('en-IN')} sq ft`, note: `${new Set(rows.map((row) => row.owner_id)).size} owners` },
     ],
     charts: [
       { title: 'Properties by type', items: tally(rows, 'property_type') },
@@ -29,7 +32,7 @@ const SUMMARIES = {
   }),
   manager: (rows) => ({
     ledger: [
-      { label: 'Units to let', value: rows.length, note: `${new Set(rows.map((r) => r.property_name)).size} properties with vacancies` },
+      { label: 'Units to let', value: rows.length, note: `${new Set(rows.map((row) => row.property_name)).size} properties with vacancies` },
       { label: 'Rent on offer', value: money(sum(rows, 'base_rent')), note: 'per month if all are let' },
       { label: 'Deposits on offer', value: money(sum(rows, 'deposit')), note: 'across available units' },
       { label: 'Average rent', value: rows.length ? money(Math.round(sum(rows, 'base_rent') / rows.length)) : '-', note: 'per available unit' },
@@ -44,8 +47,8 @@ const SUMMARIES = {
     return {
       ledger: [
         { label: 'Open tickets', value: open.length, note: `${rows.length} in total` },
-        { label: 'High priority open', value: open.filter((r) => r.priority === 'High').length, note: 'need attention first' },
-        { label: 'In progress', value: rows.filter((r) => r.status === 'In Progress').length, note: 'being worked on' },
+        { label: 'High priority open', value: open.filter((row) => row.priority === 'High').length, note: 'need attention first' },
+        { label: 'In progress', value: rows.filter((row) => row.status === 'In Progress').length, note: 'being worked on' },
         { label: 'Closed', value: rows.length - open.length, note: 'resolved or completed' },
       ],
       charts: [
@@ -55,10 +58,42 @@ const SUMMARIES = {
       feed: [...rows].sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).slice(0, 6),
     };
   },
+  owner: ({ properties, units, payments }) => {
+    const occupied = units.filter((unit) => unit.status === 'Occupied').length;
+    const collected = payments.filter((payment) => payment.payment_status === 'Paid');
+    return {
+      ledger: [
+        { label: 'Properties', value: properties.length, note: 'in your portfolio' },
+        { label: 'Units', value: units.length, note: `${occupied} occupied · ${units.filter((unit) => unit.status === 'Available').length} available` },
+        { label: 'Occupied', value: occupied, note: 'leased units' },
+        { label: 'Rent collected', value: money(sum(collected, 'amount')), note: `${collected.length} paid payments` },
+      ],
+      charts: [
+        { title: 'Properties by city', items: tally(properties, 'city') },
+        { title: 'Units by status', items: tally(units, 'status', ['Occupied', 'Available', 'Under Maintenance']) },
+      ],
+    };
+  },
+  tenant: ({ leases, payments }) => {
+    const lease = leases.find((row) => row.lease_id);
+    const lastPayment = [...payments].sort((a, b) => String(b.payment_date).localeCompare(String(a.payment_date)))[0];
+    return {
+      ledger: [
+        { label: 'Leased unit', value: lease?.unit_number || '-', note: lease?.property_name || 'No active lease' },
+        { label: 'Monthly rent', value: lease ? money(lease.monthly_rent) : '-', note: 'current lease' },
+        { label: 'Lease ends', value: lease?.lease_end || '-', note: lease?.lease_status || 'No active lease' },
+        { label: 'Last payment', value: lastPayment ? money(lastPayment.amount) : '-', note: lastPayment?.payment_date || 'No payments recorded' },
+      ],
+      charts: [
+        { title: 'Your lease', items: tally(leases.filter((row) => row.lease_status), 'lease_status') },
+        { title: 'Payments by status', items: tally(payments, 'payment_status', ['Paid', 'Pending', 'Failed']) },
+      ],
+    };
+  },
 };
 
 function Bars({ items }) {
-  const max = Math.max(1, ...items.map((i) => i.n));
+  const max = Math.max(1, ...items.map((item) => item.n));
   return (
     <ul className="bars">
       {items.map(({ label, n }) => (
@@ -74,20 +109,31 @@ function Bars({ items }) {
 
 export default function Dashboard() {
   const { role } = useParams();
-  const source = ROLES[role].views[0];
-  const [rows, setRows] = useState(null);
+  const config = ROLES[role];
+  const source = config.views[0];
+  const paths = config.summaryPaths || [source.path];
+  const pathsKey = paths.join('|');
+  const [datasets, setDatasets] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    setRows(null);
+    setDatasets(null);
     setError('');
-    getRows(source.path).then(setRows).catch((e) => setError(`${errorMessage(e)}  (GET ${source.path})`));
-  }, [role, source.path]);
+    Promise.all(paths.map((path) => getRows(path)))
+      .then(setDatasets)
+      .catch((requestError) => setError(`${errorMessage(requestError)}  (GET ${source.path})`));
+  }, [role, pathsKey]);
 
   if (error) return <p className="alert" role="alert">{error}</p>;
-  if (!rows) return <p className="muted">Loading overview...</p>;
+  if (!datasets) return <p className="muted">Loading overview...</p>;
 
-  const s = SUMMARIES[role](rows);
+  let summaryData = datasets[0];
+  if (role === 'owner') {
+    summaryData = { properties: datasets[0], units: datasets[1], payments: datasets[2] };
+  } else if (role === 'tenant') {
+    summaryData = { leases: datasets[0], payments: datasets[1] };
+  }
+  const summary = SUMMARIES[role](summaryData);
 
   return (
     <>
@@ -99,7 +145,7 @@ export default function Dashboard() {
       </header>
 
       <section className="ledger" aria-label="Key figures">
-        {s.ledger.map((item) => (
+        {summary.ledger.map((item) => (
           <div className="ledger-item" key={item.label}>
             <p className="ledger-label">{item.label}</p>
             <p className="ledger-value">{item.value}</p>
@@ -109,28 +155,28 @@ export default function Dashboard() {
       </section>
 
       <div className="two-col">
-        {s.feed ? (
+        {summary.feed ? (
           <>
             <section>
-              {s.charts.map((c, i) => (
-                <div key={c.title} className={i ? 'gap-top' : ''}>
-                  <h2>{c.title}</h2>
-                  <Bars items={c.items} />
+              {summary.charts.map((chart, index) => (
+                <div key={chart.title} className={index ? 'gap-top' : ''}>
+                  <h2>{chart.title}</h2>
+                  <Bars items={chart.items} />
                 </div>
               ))}
             </section>
             <section>
               <h2>Latest tickets</h2>
               <ul className="feed">
-                {s.feed.map((r) => (
-                  <li key={r.request_id}>
+                {summary.feed.map((row) => (
+                  <li key={row.request_id}>
                     <div>
-                      <strong>{r.category}</strong> in {r.unit_number}
-                      <p className="muted">{r.property_name}</p>
+                      <strong>{row.category}</strong> in {row.unit_number}
+                      <p className="muted">{row.property_name}</p>
                     </div>
                     <div className="feed-meta">
-                      <Badge value={r.status} />
-                      <span className="muted">{shortDateTime(r.submitted_at)}</span>
+                      <Badge value={row.status} />
+                      <span className="muted">{shortDateTime(row.submitted_at)}</span>
                     </div>
                   </li>
                 ))}
@@ -138,10 +184,10 @@ export default function Dashboard() {
             </section>
           </>
         ) : (
-          s.charts.map((c) => (
-            <section key={c.title}>
-              <h2>{c.title}</h2>
-              <Bars items={c.items} />
+          summary.charts.map((chart) => (
+            <section key={chart.title}>
+              <h2>{chart.title}</h2>
+              <Bars items={chart.items} />
             </section>
           ))
         )}

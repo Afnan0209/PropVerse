@@ -1,10 +1,7 @@
 -- ==========================================================
 -- PropVerse Master Database Schema
 -- ==========================================================
-
-DROP DATABASE IF EXISTS propverse;
-CREATE DATABASE propverse;
-USE propverse;
+-- Run this script against an already-created database.
 
 -- ==========================================================
 -- 1. TABLES (In Dependency Order)
@@ -257,6 +254,162 @@ JOIN BUILDINGS b
 JOIN PROPERTIES p 
     ON b.property_id = p.property_id;
 
+
+CREATE VIEW vw_owner_portfolio AS
+SELECT
+    o.owner_id,
+    u.full_name AS owner_name,
+    u.email,
+    u.phone,
+    p.property_id,
+    p.property_name,
+    p.property_type,
+    p.city,
+    p.total_area,
+    p.is_active
+FROM OWNERS o
+JOIN USERS u
+    ON o.user_id = u.user_id
+LEFT JOIN PROPERTIES p
+    ON o.owner_id = p.owner_id;
+
+CREATE VIEW vw_tenant_lease_details AS
+SELECT
+    t.tenant_id,
+    u.full_name AS tenant_name,
+    u.email,
+    u.phone,
+    l.lease_id,
+    l.lease_start,
+    l.lease_end,
+    l.monthly_rent,
+    l.status AS lease_status,
+    un.unit_number,
+    b.building_name,
+    p.property_name,
+    p.city,
+    l.unit_id
+FROM TENANTS t
+JOIN USERS u
+    ON t.user_id = u.user_id
+LEFT JOIN LEASE_TENANTS lt
+    ON t.tenant_id = lt.tenant_id
+LEFT JOIN LEASES l
+    ON lt.lease_id = l.lease_id
+LEFT JOIN UNITS un
+    ON l.unit_id = un.unit_id
+LEFT JOIN BUILDINGS b
+    ON un.building_id = b.building_id
+LEFT JOIN PROPERTIES p
+    ON b.property_id = p.property_id;
+
+CREATE VIEW vw_owner_units AS
+SELECT
+    p.owner_id,
+    p.property_id,
+    p.property_name,
+    p.city,
+    u.unit_id,
+    u.unit_number,
+    u.unit_type,
+    u.status,
+    u.base_rent,
+    u.deposit,
+    b.building_name,
+    tenant_user.full_name AS tenant_name
+FROM PROPERTIES p
+JOIN BUILDINGS b ON b.property_id = p.property_id
+JOIN UNITS u ON u.building_id = b.building_id
+LEFT JOIN LEASES l ON l.unit_id = u.unit_id AND l.status = 'Active'
+LEFT JOIN LEASE_TENANTS lt ON lt.lease_id = l.lease_id AND lt.is_primary = TRUE
+LEFT JOIN TENANTS t ON t.tenant_id = lt.tenant_id
+LEFT JOIN USERS tenant_user ON tenant_user.user_id = t.user_id;
+
+CREATE VIEW vw_owner_payments AS
+SELECT
+    p.owner_id,
+    p.property_id,
+    p.property_name,
+    u.unit_number,
+    l.lease_id,
+    rp.payment_id,
+    rp.amount,
+    rp.payment_date,
+    rp.payment_method,
+    rp.payment_status,
+    rp.transaction_reference
+FROM PROPERTIES p
+JOIN BUILDINGS b ON b.property_id = p.property_id
+JOIN UNITS u ON u.building_id = b.building_id
+JOIN LEASES l ON l.unit_id = u.unit_id
+JOIN RENT_PAYMENTS rp ON rp.lease_id = l.lease_id;
+
+CREATE VIEW vw_tenant_payments AS
+SELECT
+    t.tenant_id,
+    l.lease_id,
+    u.unit_number,
+    p.property_name,
+    rp.payment_id,
+    rp.amount,
+    rp.payment_date,
+    rp.payment_method,
+    rp.payment_status,
+    rp.transaction_reference
+FROM TENANTS t
+JOIN LEASE_TENANTS lt ON lt.tenant_id = t.tenant_id
+JOIN LEASES l ON l.lease_id = lt.lease_id
+JOIN UNITS u ON u.unit_id = l.unit_id
+JOIN BUILDINGS b ON b.building_id = u.building_id
+JOIN PROPERTIES p ON p.property_id = b.property_id
+JOIN RENT_PAYMENTS rp ON rp.lease_id = l.lease_id;
+
+CREATE VIEW vw_tenant_active_units AS
+SELECT
+    lt.tenant_id,
+    l.unit_id,
+    l.lease_id,
+    l.lease_start,
+    l.lease_end,
+    l.status AS lease_status
+FROM LEASE_TENANTS lt
+JOIN LEASES l ON l.lease_id = lt.lease_id
+WHERE l.status = 'Active';
+
+CREATE VIEW vw_owner_maintenance AS
+SELECT
+    p.owner_id,
+    mr.request_id,
+    mr.tenant_id,
+    mr.category,
+    mr.priority,
+    mr.description,
+    mr.status,
+    mr.submitted_at,
+    mr.resolved_at,
+    u.unit_number,
+    p.property_name
+FROM PROPERTIES p
+JOIN BUILDINGS b ON b.property_id = p.property_id
+JOIN UNITS u ON u.building_id = b.building_id
+JOIN MAINTENANCE_REQUESTS mr ON mr.unit_id = u.unit_id;
+
+CREATE VIEW vw_tenant_maintenance AS
+SELECT
+    mr.tenant_id,
+    mr.request_id,
+    mr.category,
+    mr.priority,
+    mr.description,
+    mr.status,
+    mr.submitted_at,
+    mr.resolved_at,
+    u.unit_number,
+    p.property_name
+FROM MAINTENANCE_REQUESTS mr
+JOIN UNITS u ON u.unit_id = mr.unit_id
+JOIN BUILDINGS b ON b.building_id = u.building_id
+JOIN PROPERTIES p ON p.property_id = b.property_id;
 -- ==========================================================
 -- 4. TRIGGERS
 -- ==========================================================
@@ -281,15 +434,6 @@ BEGIN
     IF NEW.lease_end <= NEW.lease_start THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Lease end date must be after lease start date';
-    END IF;
-END$$
-
-CREATE TRIGGER trg_payment_before_insert
-BEFORE INSERT ON RENT_PAYMENTS
-FOR EACH ROW
-BEGIN
-    IF NEW.amount > 0 THEN
-        SET NEW.payment_status = 'Paid';
     END IF;
 END$$
 
@@ -349,24 +493,3 @@ BEGIN
 END$$
 
 DELIMITER ;
-
--- ==========================================================
--- 5. DATABASE CONTROL LANGUAGE (DCL)
--- ==========================================================
-
--- Admin Account
-CREATE USER IF NOT EXISTS 'prop_admin'@'localhost' IDENTIFIED BY 'Admin@123';
-GRANT ALL PRIVILEGES ON propverse.* TO 'prop_admin'@'localhost';
-
--- Manager Account
-CREATE USER IF NOT EXISTS 'property_manager'@'localhost' IDENTIFIED BY 'Manager@123';
-GRANT SELECT, INSERT, UPDATE, DELETE ON propverse.* TO 'property_manager'@'localhost';
-GRANT SELECT ON propverse.vw_available_units TO 'property_manager'@'localhost';
-
--- Maintenance Staff Account
-CREATE USER IF NOT EXISTS 'maintenance_staff'@'localhost' IDENTIFIED BY 'Staff@123';
-GRANT SELECT, UPDATE ON propverse.MAINTENANCE_REQUESTS TO 'maintenance_staff'@'localhost';
-GRANT SELECT, UPDATE ON propverse.MAINTENANCE_ASSIGNMENTS TO 'maintenance_staff'@'localhost';
-GRANT SELECT ON propverse.vw_maintenance_report TO 'maintenance_staff'@'localhost';
-
-FLUSH PRIVILEGES;

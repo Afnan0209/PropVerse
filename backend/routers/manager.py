@@ -1,69 +1,129 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from datetime import date
-import mysql.connector
+import logging
 import uuid
+from datetime import date
+from decimal import Decimal
+
+import mysql.connector
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from auth import require_roles
 from database import get_manager_db
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/manager", tags=["Manager Dashboard"])
+
 
 class LeaseCreate(BaseModel):
     unit_id: str
-    tenant_id: str           # <-- Brought this back!
+    tenant_id: str
     start_date: date
     end_date: date
-    monthly_rent: float
-    security_deposit: float
+    monthly_rent: Decimal = Field(gt=0)
+    security_deposit: Decimal = Field(ge=0)
+
 
 @router.post("/create-lease")
-def create_lease(lease: LeaseCreate, db: mysql.connector.MySQLConnection = Depends(get_manager_db)):
-    """Creates a new lease and links the tenant. Trigger auto-updates unit status."""
+def create_lease(
+    lease: LeaseCreate,
+    _user: dict = Depends(require_roles("manager")),
+    db=Depends(get_manager_db),
+):
+    if lease.end_date <= lease.start_date:
+        raise HTTPException(status_code=400, detail="Lease end date must be after lease start date")
+
+    cursor = db.cursor()
     try:
-        cursor = db.cursor()
-        new_lease_id = str(uuid.uuid4())
-        
-        # 1. Insert the core lease details into LEASES
-        sql_lease = """
-            INSERT INTO LEASES (lease_id, unit_id, lease_start, lease_end, monthly_rent, security_deposit)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        val_lease = (
-            new_lease_id, 
-            lease.unit_id, 
-            lease.start_date, 
-            lease.end_date, 
-            lease.monthly_rent,
-            lease.security_deposit
+        cursor.execute(
+            "SELECT status FROM UNITS WHERE unit_id = %s FOR UPDATE",
+            (lease.unit_id,),
         )
-        cursor.execute(sql_lease, val_lease)
-        
-        # 2. Link the tenant to this new lease in LEASE_TENANTS
-        sql_tenant = """
+        unit = cursor.fetchone()
+        if not unit:
+            db.rollback()
+            raise HTTPException(status_code=404, detail="Unit not found")
+        if unit[0] != "Available":
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Unit is not available")
+
+        cursor.execute("SELECT tenant_id FROM TENANTS WHERE tenant_id = %s", (lease.tenant_id,))
+        if not cursor.fetchone():
+            db.rollback()
+            raise HTTPException(status_code=404, detail="Tenant not found")
+
+        lease_id = str(uuid.uuid4())
+        cursor.execute(
+            """
+            INSERT INTO LEASES
+                (lease_id, unit_id, lease_start, lease_end, monthly_rent, security_deposit)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                lease_id,
+                lease.unit_id,
+                lease.start_date,
+                lease.end_date,
+                lease.monthly_rent,
+                lease.security_deposit,
+            ),
+        )
+        cursor.execute(
+            """
             INSERT INTO LEASE_TENANTS (lease_id, tenant_id, is_primary)
             VALUES (%s, %s, %s)
-        """
-        # We set is_primary to True (1) for this initial tenant
-        val_tenant = (new_lease_id, lease.tenant_id, 1)
-        cursor.execute(sql_tenant, val_tenant)
-
-        # Commit BOTH inserts as a single transaction
+            """,
+            (lease_id, lease.tenant_id, True),
+        )
         db.commit()
-        cursor.close()
-        
-        return {"status": "success", "message": "Lease created and tenant linked. Unit status updated."}
+        return {"status": "success", "message": "Lease created and tenant linked"}
+    except HTTPException:
+        raise
     except mysql.connector.Error as err:
-        db.rollback() # If either insert fails, undo everything
-        raise HTTPException(status_code=500, detail=f"Database error: {err}")
+        db.rollback()
+        logger.exception("Could not create lease")
+        if err.errno == 1644:
+            raise HTTPException(status_code=400, detail="Lease dates are invalid")
+        if err.errno == 1452:
+            raise HTTPException(status_code=404, detail="Unit or tenant not found")
+        raise HTTPException(status_code=500, detail="Could not create lease")
+    finally:
+        cursor.close()
+
 
 @router.get("/available-units")
-def get_available_units(db: mysql.connector.MySQLConnection = Depends(get_manager_db)):
-    """Fetches all currently available units using the pre-built MySQL view."""
+def get_available_units(
+    _user: dict = Depends(require_roles("manager", "admin")),
+    db=Depends(get_manager_db),
+):
+    cursor = db.cursor(dictionary=True)
     try:
-        cursor = db.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM vw_available_units;")
-        units = cursor.fetchall()
+        cursor.execute("SELECT * FROM vw_available_units")
+        return {"status": "success", "data": cursor.fetchall()}
+    except mysql.connector.Error:
+        logger.exception("Could not load available units")
+        raise HTTPException(status_code=500, detail="Could not load available units")
+    finally:
         cursor.close()
-        
-        return {"status": "success", "data": units}
-    except mysql.connector.Error as err:
-        raise HTTPException(status_code=500, detail=f"Database error: {err}")
+
+
+@router.get("/tenants")
+def get_tenants(
+    _user: dict = Depends(require_roles("manager", "admin")),
+    db=Depends(get_manager_db),
+):
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """
+            SELECT t.tenant_id, u.full_name AS name, u.email
+            FROM TENANTS t
+            JOIN USERS u ON u.user_id = t.user_id
+            ORDER BY u.full_name
+            """
+        )
+        return {"status": "success", "data": cursor.fetchall()}
+    except mysql.connector.Error:
+        logger.exception("Could not load tenants for lease creation")
+        raise HTTPException(status_code=500, detail="Could not load tenants")
+    finally:
+        cursor.close()

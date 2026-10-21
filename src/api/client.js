@@ -2,16 +2,29 @@ import axios from 'axios';
 
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-export const api = axios.create({ baseURL: API_URL, timeout: 15000 });
+export const api = axios.create({ baseURL: API_URL, timeout: 45000 });
 
-// If you add login later: localStorage.setItem('pv_token', token)
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('pv_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
 
-// Your routes answer {"status": "success", "data": [...]}; a plain array also works
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const isLogin = error.config?.url?.includes('/api/auth/login');
+    if (error.response?.status === 401 && !isLogin) {
+      localStorage.removeItem('pv_token');
+      window.location.replace('/login');
+    }
+    return Promise.reject(error);
+  },
+);
+
 const unwrap = (body) => (Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : []);
 
 export const getRows = async (path) => unwrap((await api.get(path)).data);
