@@ -1,11 +1,11 @@
 -- Run with an account allowed to manage MySQL users and grants.
 -- Replace every placeholder password before running this script.
 
-CREATE USER IF NOT EXISTS 'prop_admin'@'%' IDENTIFIED BY 'Admin@123';
-CREATE USER IF NOT EXISTS 'property_manager'@'%' IDENTIFIED BY 'Manager@123';
-CREATE USER IF NOT EXISTS 'maintenance_staff'@'%' IDENTIFIED BY 'Staff@123';
-CREATE USER IF NOT EXISTS 'prop_owner'@'%' IDENTIFIED BY 'Owner@123';
-CREATE USER IF NOT EXISTS 'prop_tenant'@'%' IDENTIFIED BY 'Tenant@123';
+CREATE USER IF NOT EXISTS 'prop_admin'@'%' IDENTIFIED BY 'REPLACE_WITH_ADMIN_PASSWORD';
+CREATE USER IF NOT EXISTS 'property_manager'@'%' IDENTIFIED BY 'REPLACE_WITH_PROPERTY_MANAGER_PASSWORD';
+CREATE USER IF NOT EXISTS 'maintenance_staff'@'%' IDENTIFIED BY 'REPLACE_WITH_MAINTENANCE_STAFF_PASSWORD';
+CREATE USER IF NOT EXISTS 'prop_owner'@'%' IDENTIFIED BY 'REPLACE_WITH_PROPERTY_OWNER_PASSWORD';
+CREATE USER IF NOT EXISTS 'prop_tenant'@'%' IDENTIFIED BY 'REPLACE_WITH_PROPERTY_TENANT_PASSWORD';
 
 GRANT ALL PRIVILEGES ON propverse.* TO 'prop_admin'@'%';
 
