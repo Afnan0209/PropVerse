@@ -55,9 +55,13 @@ Copy [`.env.example`](./.env.example) and replace all placeholders. Never commit
 | `JWT_SECRET` | Long, random signing secret; generate a different value for every deployment |
 | `JWT_EXPIRE_MINUTES` | Access-token lifetime (default `60`) |
 | `CORS_ORIGINS` | Comma-separated allowed browser origins (default `http://localhost:5173`) |
-| `VITE_API_URL` | Frontend API base URL; this is the only frontend environment variable |
+| `VITE_API_URL` | Local development API base URL; deployed builds use the Netlify proxy |
 
-When running the backend locally, place the configured file at `backend/.env`. For Vite, place a copy at the repository root as `.env` and set `VITE_API_URL`. In production configure the backend variables in the hosting provider and set `VITE_API_URL` to the deployed API origin in the frontend build environment. Add the deployed frontend origin to `CORS_ORIGINS`.
+When running the backend locally, place the configured file at `backend/.env`. For Vite, place a copy at the repository root as `.env` and set `VITE_API_URL`.
+
+On Netlify, production builds send requests to `/backend`, which proxies to `https://propverse.onrender.com` using `netlify.toml`. This includes the backend health check and all `/api/*` endpoints. No frontend environment variable or Render CORS change is required for this connection; `VITE_API_URL` is used only during local development. To switch the deployed backend, update the proxy destination in `netlify.toml`. Keep this proxy rule before the single-page app fallback so API requests reach Render instead of returning the frontend HTML.
+
+Configure backend secrets only in Render. For local development against Render directly, add `http://localhost:5173` to Render's `CORS_ORIGINS`.
 
 ## Run locally
 

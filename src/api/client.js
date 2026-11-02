@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Deployed requests use Netlify's same-origin proxy to avoid Render CORS errors.
+export const API_URL = import.meta.env.PROD
+  ? '/backend'
+  : (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\/+$/, '');
 
 export const api = axios.create({ baseURL: API_URL, timeout: 45000 });
 
@@ -32,7 +35,7 @@ export const postJson = (path, body) => api.post(path, body);
 
 export function errorMessage(err) {
   if (!err.response) {
-    return `Cannot reach the backend at ${API_URL}. Check that uvicorn is running and CORS allows this address.`;
+    return `Cannot reach the backend at ${API_URL}. The server may be waking up; please try again shortly.`;
   }
   const detail = err.response.data?.detail;
   const text = Array.isArray(detail)
